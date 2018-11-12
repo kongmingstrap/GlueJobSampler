@@ -1,0 +1,12 @@
+.envrc
+/tmp/
+/.idea/
+/.venv/
+/.venv2/
+/.venv3/
+/.vscode/
+__pycache__/
+.cache/
+*.pyc
+.coverage
+/.pytest_cache/
