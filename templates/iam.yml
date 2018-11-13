@@ -1,0 +1,23 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+Description: IAM Stack
+
+Resources:
+  SAMDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: sam-deploy-role
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+            Action: sts:AssumeRole
+      Path: !Sub /${AWS::StackName}/
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AdministratorAccess
+
+Outputs:
+  SAMDeployRoleArn:
+    Value: !GetAtt SAMDeployRole.Arn
