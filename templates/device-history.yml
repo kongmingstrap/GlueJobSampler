@@ -1,0 +1,121 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+Description: Template to store device data to S3
+
+Resources:
+  DeviceHistoryDataStream:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      Name: device_history_data_stream
+      RetentionPeriodHours: 24
+      ShardCount: 1
+
+  DeviceHistoryDeliveryStream:
+    Type: AWS::KinesisFirehose::DeliveryStream
+    Properties:
+      DeliveryStreamName: device_history_delivery_stream
+      DeliveryStreamType: KinesisStreamAsSource
+      KinesisStreamSourceConfiguration:
+        KinesisStreamARN: !GetAtt DeviceHistoryDataStream.Arn
+        RoleARN: !GetAtt DeviceHistoryDataStreamRole.Arn
+      ExtendedS3DestinationConfiguration:
+        BucketARN: !GetAtt DeviceHistoryBucket.Arn
+        BufferingHints:
+          IntervalInSeconds: 60
+          SizeInMBs: 50
+        CompressionFormat: UNCOMPRESSED
+        Prefix: kinesis_data/
+        RoleARN: !GetAtt DeviceHistoryDeliveryStreamRole.Arn
+
+  DeviceHistoryDataStreamRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: device-history-data-stream-role
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: firehose.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: device-history-data-stream-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - kinesis:DescribeStream
+                  - kinesis:GetShardIterator
+                  - kinesis:GetRecords
+                Resource: !GetAtt DeviceHistoryDataStream.Arn
+
+  DeviceHistoryDeliveryStreamRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: device-history-delivery-stream-role
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: firehose.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: device-history-delivery-stream-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:AbortMultipartUpload
+                  - s3:GetBucketLocation
+                  - s3:GetObject
+                  - s3:ListBucket
+                  - s3:ListBucketMultipartUploads
+                  - s3:PutObject
+                Resource:
+                  - !Sub ${DeviceHistoryBucket.Arn}/*
+
+  DeviceHistoryBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub device-history-${AWS::AccountId}-${AWS::Region}
+
+  DeviceHistoryTopicRuleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: device-history-topic-rule-role
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: iot.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: device-history-topic-rule-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: kinesis:PutRecord
+                Resource: !GetAtt DeviceHistoryDataStream.Arn
+
+  DeviceHistoryRule:
+    Type: AWS::IoT::TopicRule
+    Properties:
+      RuleName: device_history_rule
+      TopicRulePayload:
+        AwsIotSqlVersion: "2016-03-23"
+        RuleDisabled: false
+        Sql: >-
+          SELECT
+            topic(3) as device_id,
+            timestamp() as timestamp
+          FROM '$aws/things/+/shadow/update/documents'
+        Actions:
+          - Kinesis:
+              PartitionKey: ${topic()}
+              RoleArn: !GetAtt DeviceHistoryTopicRuleRole.Arn
+              StreamName: !Ref DeviceHistoryDataStream
