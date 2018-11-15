@@ -1,0 +1,107 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+Description: ETL Stack
+
+Resources:
+  DeviceHistoryDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: device-history-database
+
+  DeviceHistoryCrawler:
+    Type: AWS::Glue::Crawler
+    Properties:
+      Name: DeviceHistoryCrawler
+      Role: !GetAtt DeviceHistoryCrawlerRole.Arn
+      Targets:
+        S3Targets:
+          - Path: !Sub s3://device-history-${AWS::AccountId}-${AWS::Region}/kinesis_data
+      DatabaseName: !Ref DeviceHistoryDatabase
+      SchemaChangePolicy:
+        UpdateBehavior: UPDATE_IN_DATABASE
+        DeleteBehavior: DELETE_FROM_DATABASE
+      TablePrefix: device_history_
+      Schedule:
+        # JST: 22:00
+        ScheduleExpression: cron(0 13 * * ? *)
+
+  DeviceHistoryCrawlerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: device-history-crawler-role
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: glue.amazonaws.com
+            Action: sts:AssumeRole
+      Path: !Sub /${AWS::StackName}/
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
+
+  AWSGlueJobScriptsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub aws-glue-scripts-bucket-${AWS::AccountId}-${AWS::Region}
+
+  AWSGlueJobTmpBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub aws-glue-tmp-bucket-${AWS::AccountId}-${AWS::Region}
+
+  AWSAthenaQueryResultsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub aws-athena-query-results-${AWS::AccountId}-${AWS::Region}
+
+  DeviceHistoryJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: DeviceHistoryJob
+      Role: !GetAtt DeviceHistoryJobRole.Arn
+      Command:
+        Name: glueetl
+        ScriptLocation: !Sub s3://${AWSGlueJobScriptsBucket}/device-history/device_history_job.py
+      DefaultArguments:
+        --TempDir: !Sub s3://${AWSGlueJobTmpBucket}/device-history
+        --job-bookmark-option: job-bookmark-enable
+        --job-language: python
+        --target_bucket: !Sub s3://device-history-${AWS::AccountId}-${AWS::Region}/etl_data
+        --database_name: !Ref DeviceHistoryDatabase
+        --table_prefix: device_history_
+        --enable-metrics: ""
+      ExecutionProperty:
+        MaxConcurrentRuns: 1
+      MaxRetries: 3
+      AllocatedCapacity: 10
+
+  DeviceHistoryJobRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: device-history-job-role
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: glue.amazonaws.com
+            Action: sts:AssumeRole
+      Path: !Sub /${AWS::StackName}/
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonAthenaFullAccess
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
+
+  DeviceHistoryJobTrigger:
+    Type: AWS::Glue::Trigger
+    Properties:
+      Name: DeviceHistoryJobTrigger
+      Type: SCHEDULED
+      Actions:
+        - JobName: !Ref DeviceHistoryJob
+      # JST: 23:00
+      Schedule: cron(0 14 * * ? *)
